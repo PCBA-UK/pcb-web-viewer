@@ -1,16 +1,16 @@
 import { defineConfig } from 'vite'
 import { nodePolyfills } from 'vite-plugin-node-polyfills'
 
+import { cloudflare } from "@cloudflare/vite-plugin";
+
 export default defineConfig({
-  plugins: [
-    nodePolyfills({
-      include: ['buffer', 'stream', 'util', 'events', 'string_decoder'],
-      globals: {
-        Buffer: true,
-        process: false, // We'll handle process ourselves
-      },
-    }),
-  ],
+  plugins: [nodePolyfills({
+    include: ['buffer', 'stream', 'util', 'events', 'string_decoder'],
+    globals: {
+      Buffer: true,
+      process: false, // We'll handle process ourselves
+    },
+  }), cloudflare()],
   optimizeDeps: {
     include: ['pcb-stackup', 'libarchive.js', 'fflate'],
     esbuildOptions: {
