@@ -14,7 +14,7 @@
     "pcb-stackup": "^4.2.8"
   },
   "devDependencies": {
-    "vite": "^5.0.0",
+    "vite": "^6.1.0",
     "vite-plugin-node-polyfills": "^0.25.0"
   }
 }
