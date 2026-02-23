@@ -1,15 +1,32 @@
 import './src/polyfill.js'
 import { unzipSync } from 'fflate'
 import { Archive } from 'libarchive.js'
-
-// Create two Web Workers for parallel pcb-stackup processing
-const workerUrl = new URL('./src/stackup.worker.js', import.meta.url)
-const stackupWorker1 = new Worker(workerUrl, { type: 'module' })
-const stackupWorker2 = new Worker(workerUrl, { type: 'module' })
+import pcbStackup from 'pcb-stackup'
 
 // Worker promise tracking
 let workerTaskId = 0
 const workerPromises = new Map()
+let workersAvailable = false
+let stackupWorker1 = null
+let stackupWorker2 = null
+
+// Try to create workers, fall back to main thread if unavailable
+try {
+  const workerUrl = new URL('./src/stackup.worker.js', import.meta.url)
+  stackupWorker1 = new Worker(workerUrl, { type: 'module' })
+  stackupWorker2 = new Worker(workerUrl, { type: 'module' })
+
+  stackupWorker1.onmessage = handleWorkerMessage
+  stackupWorker2.onmessage = handleWorkerMessage
+
+  stackupWorker1.onerror = () => { workersAvailable = false }
+  stackupWorker2.onerror = () => { workersAvailable = false }
+
+  workersAvailable = true
+} catch (e) {
+  console.warn('Web Workers not available, using main thread')
+  workersAvailable = false
+}
 
 function handleWorkerMessage(e) {
   const { type, id, top, bottom, error } = e.data
@@ -25,16 +42,27 @@ function handleWorkerMessage(e) {
   }
 }
 
-stackupWorker1.onmessage = handleWorkerMessage
-stackupWorker2.onmessage = handleWorkerMessage
+// Function to render stackup - uses worker if available, else main thread
+async function renderStackupInWorker(layers, worker = stackupWorker1) {
+  if (workersAvailable && worker) {
+    return new Promise((resolve, reject) => {
+      const id = ++workerTaskId
+      workerPromises.set(id, { resolve, reject })
+      worker.postMessage({ type: 'render', layers, id })
 
-// Function to send work to a specific worker and get a promise back
-function renderStackupInWorker(layers, worker = stackupWorker1) {
-  return new Promise((resolve, reject) => {
-    const id = ++workerTaskId
-    workerPromises.set(id, { resolve, reject })
-    worker.postMessage({ type: 'render', layers, id })
-  })
+      // Timeout fallback after 60 seconds
+      setTimeout(() => {
+        if (workerPromises.has(id)) {
+          workerPromises.delete(id)
+          reject(new Error('Worker timeout'))
+        }
+      }, 60000)
+    })
+  } else {
+    // Fallback: process on main thread
+    const result = await pcbStackup(layers)
+    return { top: result.top.svg, bottom: result.bottom.svg }
+  }
 }
 
 // DOM Elements
