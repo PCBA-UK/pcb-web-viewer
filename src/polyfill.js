@@ -1,11 +1,14 @@
-// Polyfill for process.nextTick
+// Polyfill for process.nextTick - works in both main thread and worker
 import { Buffer } from 'buffer'
 
-window.Buffer = Buffer
-window.global = window.global || window
+// Get the global object (window in main thread, self in worker)
+const globalObj = typeof window !== 'undefined' ? window : self
+
+globalObj.Buffer = Buffer
+globalObj.global = globalObj.global || globalObj
 
 // Simple process polyfill with nextTick
-window.process = window.process || {
+globalObj.process = globalObj.process || {
   env: {},
   version: 'v16.0.0',
   versions: { node: '16.0.0' },

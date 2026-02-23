@@ -1,7 +1,41 @@
 import './src/polyfill.js'
-import pcbStackup from 'pcb-stackup'
 import { unzipSync } from 'fflate'
 import { Archive } from 'libarchive.js'
+
+// Create two Web Workers for parallel pcb-stackup processing
+const workerUrl = new URL('./src/stackup.worker.js', import.meta.url)
+const stackupWorker1 = new Worker(workerUrl, { type: 'module' })
+const stackupWorker2 = new Worker(workerUrl, { type: 'module' })
+
+// Worker promise tracking
+let workerTaskId = 0
+const workerPromises = new Map()
+
+function handleWorkerMessage(e) {
+  const { type, id, top, bottom, error } = e.data
+  const resolver = workerPromises.get(id)
+
+  if (resolver) {
+    workerPromises.delete(id)
+    if (type === 'result') {
+      resolver.resolve({ top, bottom })
+    } else if (type === 'error') {
+      resolver.reject(new Error(error))
+    }
+  }
+}
+
+stackupWorker1.onmessage = handleWorkerMessage
+stackupWorker2.onmessage = handleWorkerMessage
+
+// Function to send work to a specific worker and get a promise back
+function renderStackupInWorker(layers, worker = stackupWorker1) {
+  return new Promise((resolve, reject) => {
+    const id = ++workerTaskId
+    workerPromises.set(id, { resolve, reject })
+    worker.postMessage({ type: 'render', layers, id })
+  })
+}
 
 // DOM Elements
 const modalOverlay = document.getElementById('modalOverlay')
@@ -39,6 +73,7 @@ let showPaste = true
 let cachedWithPaste = null // { top, bottom }
 let cachedWithoutPaste = null // { top, bottom }
 let scale = 1
+let minScale = 0.01 // Minimum zoom level
 let panX = 0
 let panY = 0
 let isDragging = false
@@ -157,9 +192,7 @@ function isGerberFile(filename) {
   const dotIndex = filename.lastIndexOf('.')
   if (dotIndex === -1) return false
   const ext = filename.toLowerCase().slice(dotIndex)
-  const isGerber = gerberExtensions.includes(ext)
-  console.log(`    isGerberFile(${filename}): ext=${ext}, result=${isGerber}`)
-  return isGerber
+  return gerberExtensions.includes(ext)
 }
 
 // Check if .txt file is actually a drill file by content
@@ -233,29 +266,16 @@ function extractFromZip(arrayBuffer, archiveName) {
 
   try {
     const unzipped = unzipSync(new Uint8Array(arrayBuffer))
-    const entries = Object.entries(unzipped)
-    console.log(`ZIP contains ${entries.length} entries`)
 
     for (const [path, data] of Object.entries(unzipped)) {
-      console.log(`Checking ZIP entry: ${path}`)
-
       // Skip directories
-      if (path.endsWith('/')) {
-        console.log(`  -> Skipping directory`)
-        continue
-      }
+      if (path.endsWith('/')) continue
 
       // Get filename from path (handles subfolders)
       const filename = path.split('/').pop()
-      if (!filename) {
-        console.log(`  -> Could not extract filename`)
-        continue
-      }
-
-      console.log(`  -> Filename: ${filename}`)
+      if (!filename) continue
 
       if (isGerberFile(filename)) {
-        console.log(`  -> Gerber file detected, adding to layers`)
         const content = new TextDecoder().decode(data)
         layers.push({
           filename: filename,
@@ -265,27 +285,17 @@ function extractFromZip(arrayBuffer, archiveName) {
       } else if (filename.toLowerCase().endsWith('.txt')) {
         const content = new TextDecoder().decode(data)
 
-        if (isPickAndPlaceFile(content)) {
-          console.log(`  -> Skipping pick-and-place file: ${filename}`)
-          continue
-        }
+        if (isPickAndPlaceFile(content)) continue
 
         if (isDrillFile(content)) {
-          console.log(`  -> Drill file detected, adding to layers`)
           layers.push({
             filename: filename,
             gerber: content
           })
           names.push(`${archiveName}/${filename}`)
-        } else {
-          console.log(`  -> .txt file is not a drill file, skipping`)
         }
-      } else {
-        console.log(`  -> Not a gerber or drill file, skipping`)
       }
     }
-
-    console.log(`Extracted ${layers.length} layers from ZIP`)
   } catch (error) {
     console.error('Error extracting ZIP:', error)
     throw new Error(`Failed to extract ${archiveName}: ${error.message}`)
@@ -303,8 +313,6 @@ async function extractFromOtherArchive(file, archiveName) {
     const archive = await Archive.open(file)
     const files = await archive.getFilesArray()
 
-    console.log(`Archive ${archiveName} contains ${files.length} files`)
-
     for (const extractedFile of files) {
       const path = extractedFile.path || extractedFile.name || ''
       // Skip directories
@@ -313,8 +321,6 @@ async function extractFromOtherArchive(file, archiveName) {
       // Get filename from path (handles subfolders)
       const filename = path.split('/').pop()
       if (!filename) continue
-
-      console.log(`Checking file in archive: ${filename}`)
 
       if (isGerberFile(filename)) {
         const content = await extractedFile.getText()
@@ -326,10 +332,7 @@ async function extractFromOtherArchive(file, archiveName) {
       } else if (filename.toLowerCase().endsWith('.txt')) {
         const content = await extractedFile.getText()
 
-        if (isPickAndPlaceFile(content)) {
-          console.log(`Skipping pick-and-place file: ${filename}`)
-          continue
-        }
+        if (isPickAndPlaceFile(content)) continue
 
         if (isDrillFile(content)) {
           layers.push({
@@ -374,13 +377,9 @@ async function handleFiles(fileListInput) {
     const newNames = []
 
     for (const file of newFiles) {
-      console.log(`Processing file: ${file.name}`)
-
       if (isArchive(file.name)) {
         // Handle archive (ZIP, TAR, 7z, RAR)
-        console.log(`Extracting archive: ${file.name}`)
         const extracted = await extractFromArchive(file, file.name)
-        console.log(`Extracted ${extracted.layers.length} layers from ${file.name}`)
         newLayers.push(...extracted.layers)
         newNames.push(...extracted.names)
       } else if (isGerberFile(file.name)) {
@@ -395,11 +394,7 @@ async function handleFiles(fileListInput) {
         // Check if .txt file is a drill file
         const content = await readFileAsText(file)
 
-        if (isPickAndPlaceFile(content)) {
-          // Skip pick-and-place files
-          console.log(`Skipping pick-and-place file: ${file.name}`)
-          continue
-        }
+        if (isPickAndPlaceFile(content)) continue
 
         if (isDrillFile(content)) {
           // It's a drill file, include it
@@ -408,8 +403,6 @@ async function handleFiles(fileListInput) {
             gerber: content
           })
           newNames.push(file.name)
-        } else {
-          console.log(`Skipping unknown .txt file: ${file.name}`)
         }
       }
       // Ignore other non-gerber files
@@ -511,27 +504,28 @@ async function renderStackup() {
   }
 
   try {
-    // Generate version WITH paste
-    const stackupWithPaste = await pcbStackup(inputLayers)
-    cachedWithPaste = {
-      top: stackupWithPaste.top.svg,
-      bottom: stackupWithPaste.bottom.svg
-    }
-
-    // Generate version WITHOUT paste
+    // Generate versions WITHOUT paste layer for filtering
     const layersWithoutPaste = inputLayers.filter(layer => {
       const filename = layer.filename.toLowerCase()
       return !filename.includes('paste') && !filename.includes('.gtp') && !filename.includes('.gbp')
     })
 
-    if (layersWithoutPaste.length > 0) {
-      const stackupWithoutPaste = await pcbStackup(layersWithoutPaste)
-      cachedWithoutPaste = {
-        top: stackupWithoutPaste.top.svg,
-        bottom: stackupWithoutPaste.bottom.svg
-      }
+    // Process both versions in parallel using two workers
+    const hasPasteLayers = layersWithoutPaste.length < inputLayers.length
+
+    let results
+    if (hasPasteLayers && layersWithoutPaste.length > 0) {
+      // Process both versions in parallel
+      results = await Promise.all([
+        renderStackupInWorker(inputLayers, stackupWorker1),
+        renderStackupInWorker(layersWithoutPaste, stackupWorker2)
+      ])
+      cachedWithPaste = { top: results[0].top, bottom: results[0].bottom }
+      cachedWithoutPaste = { top: results[1].top, bottom: results[1].bottom }
     } else {
-      // If no layers without paste, just use the same as with paste
+      // Only one version needed (no paste layers or only paste layers)
+      const result = await renderStackupInWorker(inputLayers, stackupWorker1)
+      cachedWithPaste = { top: result.top, bottom: result.bottom }
       cachedWithoutPaste = cachedWithPaste
     }
 
@@ -624,7 +618,7 @@ zoomInBtn.addEventListener('click', () => {
 })
 
 zoomOutBtn.addEventListener('click', () => {
-  scale = Math.max(scale / 1.25, 0.1)
+  scale = Math.max(scale / 1.25, minScale)
   updateTransform()
   updateZoomLevel()
 })
@@ -647,33 +641,25 @@ function fitToScreen() {
     ? topSvg.querySelector('svg')
     : bottomSvg.querySelector('svg')
 
-  if (!svgEl) {
-    console.log('fitToScreen: No SVG element found')
-    return
-  }
+  if (!svgEl) return
 
   // Get SVG's natural dimensions from viewBox (in gerber units)
   const viewBox = svgEl.getAttribute('viewBox')
-  if (!viewBox) {
-    console.log('fitToScreen: No viewBox found')
-    return
-  }
+  if (!viewBox) return
 
   const [, , svgWidth, svgHeight] = viewBox.split(/\s+/).map(Number)
-  console.log(`fitToScreen: viewBox dimensions = ${svgWidth} x ${svgHeight}`)
 
   // Get viewer dimensions
   const viewerRect = viewer.getBoundingClientRect()
-  console.log(`fitToScreen: viewer dimensions = ${viewerRect.width} x ${viewerRect.height}`)
 
   // Calculate scale to fit with 5% margin (95% of viewer)
-  // The viewBox is in gerber units, we need to scale so it fits in the viewer
   const margin = 0.95
   const scaleX = (viewerRect.width * margin) / svgWidth
   const scaleY = (viewerRect.height * margin) / svgHeight
   scale = Math.min(scaleX, scaleY)
 
-  console.log(`fitToScreen: calculated scale = ${scale}`)
+  // Set minimum scale to fitted scale (can't zoom out past full board view)
+  minScale = scale
 
   // Reset pan to center
   panX = 0
@@ -709,8 +695,8 @@ viewer.addEventListener('mouseleave', () => {
 // Mouse wheel zoom
 viewer.addEventListener('wheel', (e) => {
   e.preventDefault()
-  const delta = e.deltaY > 0 ? -0.1 : 0.1
-  scale = Math.max(0.1, Math.min(10, scale + delta))
+  const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1
+  scale = Math.max(minScale, Math.min(10, scale * zoomFactor))
   updateTransform()
   updateZoomLevel()
 }, { passive: false })
@@ -738,7 +724,7 @@ viewer.addEventListener('touchmove', (e) => {
   } else if (e.touches.length === 2) {
     const currentDistance = getPinchDistance(e.touches)
     const scaleFactor = currentDistance / initialPinchDistance
-    scale = Math.max(0.1, Math.min(10, scale * scaleFactor))
+    scale = Math.max(minScale, Math.min(10, scale * scaleFactor))
     initialPinchDistance = currentDistance
     updateTransform()
     updateZoomLevel()
@@ -769,7 +755,7 @@ document.addEventListener('keydown', (e) => {
     updateTransform()
     updateZoomLevel()
   } else if (e.key === '-') {
-    scale = Math.max(scale / 1.25, 0.1)
+    scale = Math.max(scale / 1.25, minScale)
     updateTransform()
     updateZoomLevel()
   } else if (e.key === '0') {
