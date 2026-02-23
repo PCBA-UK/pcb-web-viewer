@@ -53,6 +53,22 @@ layersPanel.classList.add('hidden')
 
 // Open button shows modal
 openBtn.addEventListener('click', () => {
+  // Clear existing data before opening upload modal
+  inputLayers = []
+  fileNames = []
+  cachedWithPaste = null
+  cachedWithoutPaste = null
+  topSvg.innerHTML = ''
+  bottomSvg.innerHTML = ''
+  placeholder.classList.remove('hidden')
+  fileBar.classList.remove('active')
+  layersPanel.classList.add('hidden')
+  scale = 1
+  panX = 0
+  panY = 0
+  updateTransform()
+  updateZoomLevel()
+
   modalOverlay.classList.remove('hidden')
 })
 
