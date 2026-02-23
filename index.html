@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PCB Gerber Viewer</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Full Screen Viewer -->
+  <div class="viewer-container" id="viewerContainer">
+    <div class="viewer-header">
+      <h1>PCB Gerber Viewer</h1>
+      <div class="header-controls">
+        <button id="openBtn" class="open-btn" title="Open Files">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+          Open Files
+        </button>
+      </div>
+    </div>
+
+    <div class="viewer-controls">
+      <div class="view-toggle">
+        <button id="topBtn" class="toggle-btn active">Top</button>
+        <button id="bottomBtn" class="toggle-btn">Bottom</button>
+      </div>
+      <div class="zoom-controls">
+        <button id="zoomOutBtn" title="Zoom Out">−</button>
+        <span id="zoomLevel">100%</span>
+        <button id="zoomInBtn" title="Zoom In">+</button>
+        <button id="resetBtn" title="Reset View">Reset</button>
+      </div>
+    </div>
+
+    <div class="viewer" id="viewer">
+      <div class="svg-container" id="svgContainer">
+        <div id="topSvg" class="board-side"></div>
+        <div id="bottomSvg" class="board-side hidden"></div>
+      </div>
+      <div class="placeholder" id="placeholder">
+        <p>No board loaded</p>
+        <span>Drop Gerber files or click "Open Files"</span>
+      </div>
+    </div>
+
+    <!-- Layers Panel -->
+    <div class="layers-panel" id="layersPanel">
+      <div class="layers-header">
+        <h3>Display</h3>
+        <button id="toggleLayersBtn" class="toggle-layers-btn" title="Collapse">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="15 18 9 12 15 6"></polyline>
+          </svg>
+        </button>
+      </div>
+      <div class="layers-content">
+        <label class="toggle-option">
+          <input type="checkbox" id="pasteToggle" checked>
+          <span>Show Paste Layer</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="file-bar" id="fileBar">
+      <div class="file-info" id="fileInfo"></div>
+      <button id="clearBtn" class="clear-btn">Clear</button>
+    </div>
+  </div>
+
+  <!-- Upload Modal -->
+  <div class="modal-overlay" id="modalOverlay">
+    <div class="modal" id="uploadModal">
+      <div class="upload-zone" id="uploadZone">
+        <div class="upload-content">
+          <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+          <p>Drag & drop Gerber files here</p>
+          <span class="upload-hint">or</span>
+          <div class="upload-buttons">
+            <label class="file-input-label">
+              Browse Files
+              <input type="file" id="fileInput" multiple accept=".gbr,.gtl,.gbl,.gts,.gbs,.gto,.gbo,.gtp,.gbp,.gm1,.gml,.drl,.txt,.pho,.ger">
+            </label>
+            <button id="loadExampleBtn" class="example-btn">Load Example</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Loading Overlay -->
+  <div class="loading-overlay" id="loading">
+    <div class="loading-content">
+      <div class="spinner"></div>
+      <p>Processing Gerber files...</p>
+    </div>
+  </div>
+
+  <!-- Error Toast -->
+  <div class="error-toast" id="errorMessage">
+    <span id="errorText"></span>
+    <button id="dismissError">&times;</button>
+  </div>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+{
+  "name": "pcb-viewer",
+  "version": "1.0.0",
+  "description": "Upload and view PCB gerber files",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "pcb-stackup": "^4.2.8"
+  },
+  "devDependencies": {
+    "vite": "^5.0.0",
+    "vite-plugin-node-polyfills": "^0.25.0"
+  }
+}
