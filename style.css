@@ -168,13 +168,6 @@ body {
   align-items: center;
 }
 
-.board-side svg {
-  max-width: 80vw;
-  max-height: 80vh;
-  width: auto;
-  height: auto;
-}
-
 .board-side.hidden {
   display: none;
 }

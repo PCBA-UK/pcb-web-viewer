@@ -9,6 +9,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "fflate": "^0.8.2",
+    "libarchive.js": "^2.0.2",
     "pcb-stackup": "^4.2.8"
   },
   "devDependencies": {

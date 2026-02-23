@@ -12,7 +12,7 @@ export default defineConfig({
     }),
   ],
   optimizeDeps: {
-    include: ['pcb-stackup'],
+    include: ['pcb-stackup', 'libarchive.js', 'fflate'],
     esbuildOptions: {
       define: {
         global: 'globalThis',

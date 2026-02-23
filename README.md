@@ -13,6 +13,7 @@ A web-based viewer for visualizing PCB Gerber files. Upload your manufacturing f
 
 ## Supported File Types
 
+**Gerber Files:**
 - `.gbr` - Gerber files
 - `.gtl` - Top copper
 - `.gbl` - Bottom copper
@@ -22,9 +23,20 @@ A web-based viewer for visualizing PCB Gerber files. Upload your manufacturing f
 - `.gbo` - Bottom silkscreen
 - `.gtp` - Top paste
 - `.gbp` - Bottom paste
-- `.gm1`, `.gml` - Board outline
-- `.drl` - Drill files
-- `.txt`, `.pho`, `.ger` - Other Gerber formats
+- `.gm1`, `.gml`, `.gko` - Board outline
+- `.drl`, `.txt` - Drill files (Excellon format)
+- `.pho`, `.ger`, `.spl` - Other Gerber formats
+
+> **Note:** `.txt` files are automatically detected as drill files. Pick-and-place files are ignored.
+
+**Archives:**
+- `.zip` - ZIP archives
+- `.tar` - TAR archives
+- `.tar.gz`, `.tgz` - Gzipped TAR archives
+- `.7z` - 7-Zip archives
+- `.rar` - RAR archives
+
+All archive formats support nested subfolders.
 
 ## Installation
 
@@ -46,9 +58,14 @@ npm run preview
 
 1. **Open the viewer** - Run `npm run dev` and open http://localhost:5173
 2. **Load files** - Drag & drop your Gerber files or click "Browse Files"
-3. **Navigate** - Use mouse wheel to zoom, drag to pan
-4. **Switch views** - Click "Top" or "Bottom" to flip the board
-5. **Toggle paste** - Check/uncheck "Show Paste Layer" in the Display panel
+3. **Load sample** - Click "Load Sample" to load gerber files from the `sample/` folder
+4. **Navigate** - Use mouse wheel to zoom, drag to pan
+5. **Switch views** - Click "Top" or "Bottom" to flip the board
+6. **Toggle paste** - Check/uncheck "Show Paste Layer" in the Display panel
+
+### Adding Sample Files
+
+Place any Gerber files (`.gbr`, `.gtl`, `.gbl`, `.drl`, etc.) in the `sample/` folder. They will automatically be loaded when you click "Load Sample".
 
 ## Keyboard Shortcuts
 

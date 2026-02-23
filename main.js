@@ -1,5 +1,7 @@
 import './src/polyfill.js'
 import pcbStackup from 'pcb-stackup'
+import { unzipSync } from 'fflate'
+import { Archive } from 'libarchive.js'
 
 // DOM Elements
 const modalOverlay = document.getElementById('modalOverlay')
@@ -42,16 +44,8 @@ let panY = 0
 let isDragging = false
 let startX, startY
 
-// Example files
-const exampleFiles = [
-  'examples/board-F.Cu.gtl',
-  'examples/board-B.Cu.gbl',
-  'examples/board-F.Mask.gts',
-  'examples/board-B.Mask.gbs',
-  'examples/board-F.SilkS.gto',
-  'examples/board-B.SilkS.gbo',
-  'examples/board-Edge.Cuts.gm1'
-]
+// Import all files from sample folder as raw text
+const sampleModules = import.meta.glob('./sample/*', { eager: true, query: '?raw' })
 
 // Show modal on page load
 modalOverlay.classList.remove('hidden')
@@ -136,6 +130,220 @@ function handleFileSelect(e) {
   handleFiles(e.target.files)
 }
 
+// Gerber file extensions
+const gerberExtensions = [
+  '.gbr', '.gtl', '.gbl', '.gts', '.gbs', '.gto', '.gbo',
+  '.gtp', '.gbp', '.gm1', '.gml', '.gko', '.drl', '.pho', '.ger', '.spl'
+]
+
+// Check if file is a gerber file by extension
+function isGerberFile(filename) {
+  const dotIndex = filename.lastIndexOf('.')
+  if (dotIndex === -1) return false
+  const ext = filename.toLowerCase().slice(dotIndex)
+  const isGerber = gerberExtensions.includes(ext)
+  console.log(`    isGerberFile(${filename}): ext=${ext}, result=${isGerber}`)
+  return isGerber
+}
+
+// Check if .txt file is actually a drill file by content
+function isDrillFile(content) {
+  const firstLines = content.slice(0, 1000).toUpperCase()
+
+  // Excellon drill file indicators
+  if (firstLines.includes('M48') ||
+      firstLines.includes('INCH') ||
+      firstLines.includes('METRIC') ||
+      firstLines.includes('FMAT,2') ||
+      firstLines.includes(';FILE_FORMAT') ||
+      /^T\d+C\d+/m.test(firstLines)) {
+    return true
+  }
+
+  // Sieb & Mayer drill file indicators
+  if (firstLines.includes('%TNC') ||
+      firstLines.includes('TNC')) {
+    return true
+  }
+
+  return false
+}
+
+// Check if .txt file is a pick-and-place file (should be ignored)
+function isPickAndPlaceFile(content) {
+  const firstLines = content.slice(0, 500).toLowerCase()
+
+  // Common pick-and-place headers
+  if (firstLines.includes('designator') ||
+      firstLines.includes('footprint') ||
+      firstLines.includes('refdes') ||
+      firstLines.includes('comment') && firstLines.includes('pattern')) {
+    return true
+  }
+
+  // Check for CSV-like structure with coordinates
+  const lines = content.slice(0, 300).split('\n')
+  if (lines.length >= 2) {
+    const headerLine = lines[0].toLowerCase()
+    if ((headerLine.includes('x') && headerLine.includes('y') && headerLine.includes('val') ||
+         headerLine.includes('mid x') || headerLine.includes('posx'))) {
+      return true
+    }
+  }
+
+  return false
+}
+
+// Check if file is an archive
+function isArchive(filename) {
+  const lower = filename.toLowerCase()
+  return lower.endsWith('.zip') ||
+         lower.endsWith('.tar') ||
+         lower.endsWith('.tar.gz') ||
+         lower.endsWith('.tgz') ||
+         lower.endsWith('.7z') ||
+         lower.endsWith('.rar')
+}
+
+// Check if archive is ZIP (handled by fflate)
+function isZipArchive(filename) {
+  return filename.toLowerCase().endsWith('.zip')
+}
+
+// Extract gerber files from a ZIP archive using fflate
+function extractFromZip(arrayBuffer, archiveName) {
+  const layers = []
+  const names = []
+
+  try {
+    const unzipped = unzipSync(new Uint8Array(arrayBuffer))
+    const entries = Object.entries(unzipped)
+    console.log(`ZIP contains ${entries.length} entries`)
+
+    for (const [path, data] of Object.entries(unzipped)) {
+      console.log(`Checking ZIP entry: ${path}`)
+
+      // Skip directories
+      if (path.endsWith('/')) {
+        console.log(`  -> Skipping directory`)
+        continue
+      }
+
+      // Get filename from path (handles subfolders)
+      const filename = path.split('/').pop()
+      if (!filename) {
+        console.log(`  -> Could not extract filename`)
+        continue
+      }
+
+      console.log(`  -> Filename: ${filename}`)
+
+      if (isGerberFile(filename)) {
+        console.log(`  -> Gerber file detected, adding to layers`)
+        const content = new TextDecoder().decode(data)
+        layers.push({
+          filename: filename,
+          gerber: content
+        })
+        names.push(`${archiveName}/${filename}`)
+      } else if (filename.toLowerCase().endsWith('.txt')) {
+        const content = new TextDecoder().decode(data)
+
+        if (isPickAndPlaceFile(content)) {
+          console.log(`  -> Skipping pick-and-place file: ${filename}`)
+          continue
+        }
+
+        if (isDrillFile(content)) {
+          console.log(`  -> Drill file detected, adding to layers`)
+          layers.push({
+            filename: filename,
+            gerber: content
+          })
+          names.push(`${archiveName}/${filename}`)
+        } else {
+          console.log(`  -> .txt file is not a drill file, skipping`)
+        }
+      } else {
+        console.log(`  -> Not a gerber or drill file, skipping`)
+      }
+    }
+
+    console.log(`Extracted ${layers.length} layers from ZIP`)
+  } catch (error) {
+    console.error('Error extracting ZIP:', error)
+    throw new Error(`Failed to extract ${archiveName}: ${error.message}`)
+  }
+
+  return { layers, names }
+}
+
+// Extract gerber files from other archives using libarchive.js
+async function extractFromOtherArchive(file, archiveName) {
+  const layers = []
+  const names = []
+
+  try {
+    const archive = await Archive.open(file)
+    const files = await archive.getFilesArray()
+
+    console.log(`Archive ${archiveName} contains ${files.length} files`)
+
+    for (const extractedFile of files) {
+      const path = extractedFile.path || extractedFile.name || ''
+      // Skip directories
+      if (path.endsWith('/')) continue
+
+      // Get filename from path (handles subfolders)
+      const filename = path.split('/').pop()
+      if (!filename) continue
+
+      console.log(`Checking file in archive: ${filename}`)
+
+      if (isGerberFile(filename)) {
+        const content = await extractedFile.getText()
+        layers.push({
+          filename: filename,
+          gerber: content
+        })
+        names.push(`${archiveName}/${filename}`)
+      } else if (filename.toLowerCase().endsWith('.txt')) {
+        const content = await extractedFile.getText()
+
+        if (isPickAndPlaceFile(content)) {
+          console.log(`Skipping pick-and-place file: ${filename}`)
+          continue
+        }
+
+        if (isDrillFile(content)) {
+          layers.push({
+            filename: filename,
+            gerber: content
+          })
+          names.push(`${archiveName}/${filename}`)
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Error extracting archive:', error)
+    throw new Error(`Failed to extract ${archiveName}: ${error.message}`)
+  }
+
+  return { layers, names }
+}
+
+// Extract gerber files from an archive
+async function extractFromArchive(file, archiveName) {
+  if (isZipArchive(archiveName)) {
+    // Use fflate for ZIP files (more reliable)
+    const arrayBuffer = await file.arrayBuffer()
+    return extractFromZip(arrayBuffer, archiveName)
+  } else {
+    // Use libarchive.js for other formats (7z, RAR, TAR)
+    return extractFromOtherArchive(file, archiveName)
+  }
+}
+
 async function handleFiles(fileListInput) {
   const newFiles = Array.from(fileListInput).filter(file => {
     return !fileNames.includes(file.name)
@@ -146,17 +354,59 @@ async function handleFiles(fileListInput) {
   showLoading()
 
   try {
-    const readPromises = newFiles.map(async (file) => {
-      const content = await readFileAsText(file)
-      return {
-        filename: file.name,
-        gerber: content
-      }
-    })
+    const newLayers = []
+    const newNames = []
 
-    const newLayers = await Promise.all(readPromises)
+    for (const file of newFiles) {
+      console.log(`Processing file: ${file.name}`)
+
+      if (isArchive(file.name)) {
+        // Handle archive (ZIP, TAR, 7z, RAR)
+        console.log(`Extracting archive: ${file.name}`)
+        const extracted = await extractFromArchive(file, file.name)
+        console.log(`Extracted ${extracted.layers.length} layers from ${file.name}`)
+        newLayers.push(...extracted.layers)
+        newNames.push(...extracted.names)
+      } else if (isGerberFile(file.name)) {
+        // Handle regular gerber file
+        const content = await readFileAsText(file)
+        newLayers.push({
+          filename: file.name,
+          gerber: content
+        })
+        newNames.push(file.name)
+      } else if (file.name.toLowerCase().endsWith('.txt')) {
+        // Check if .txt file is a drill file
+        const content = await readFileAsText(file)
+
+        if (isPickAndPlaceFile(content)) {
+          // Skip pick-and-place files
+          console.log(`Skipping pick-and-place file: ${file.name}`)
+          continue
+        }
+
+        if (isDrillFile(content)) {
+          // It's a drill file, include it
+          newLayers.push({
+            filename: file.name,
+            gerber: content
+          })
+          newNames.push(file.name)
+        } else {
+          console.log(`Skipping unknown .txt file: ${file.name}`)
+        }
+      }
+      // Ignore other non-gerber files
+    }
+
+    if (newLayers.length === 0) {
+      hideLoading()
+      showError('No Gerber files found in the selected files.')
+      return
+    }
+
     inputLayers = [...inputLayers, ...newLayers]
-    fileNames = [...fileNames, ...newFiles.map(f => f.name)]
+    fileNames = [...fileNames, ...newNames]
 
     await renderStackup()
   } catch (error) {
@@ -169,21 +419,38 @@ async function loadExampleFiles() {
   showLoading()
 
   try {
-    const fetchPromises = exampleFiles.map(async (path) => {
-      const response = await fetch(path)
-      if (!response.ok) throw new Error(`Failed to load ${path}`)
-      const content = await response.text()
-      const filename = path.split('/').pop()
-      return { filename, gerber: content }
-    })
+    // Get all files from sample folder
+    const sampleFiles = Object.entries(sampleModules)
+      .filter(([path, module]) => {
+        const filename = path.split('/').pop()
+        // Check if it's a gerber file or drill file
+        if (isGerberFile(filename)) return true
+        if (filename.toLowerCase().endsWith('.txt')) {
+          // Check if it's a drill file
+          const content = module?.default || ''
+          return isDrillFile(content) && !isPickAndPlaceFile(content)
+        }
+        return false
+      })
+      .map(([path, module]) => {
+        const filename = path.split('/').pop()
+        const content = module?.default || ''
+        return { filename, gerber: content }
+      })
 
-    inputLayers = await Promise.all(fetchPromises)
-    fileNames = exampleFiles.map(path => path.split('/').pop())
+    if (sampleFiles.length === 0) {
+      hideLoading()
+      showError('No Gerber files found in sample folder.')
+      return
+    }
+
+    inputLayers = sampleFiles
+    fileNames = sampleFiles.map(f => f.filename)
 
     await renderStackup()
   } catch (error) {
-    console.error('Error loading example files:', error)
-    showError(error.message || 'Failed to load example files.')
+    console.error('Error loading sample files:', error)
+    showError(error.message || 'Failed to load sample files.')
   }
 }
 
@@ -255,11 +522,10 @@ async function renderStackup() {
     // Display the current selection
     displayCachedBoard()
 
-    scale = 1
-    panX = 0
-    panY = 0
-    updateTransform()
-    updateZoomLevel()
+    // Fit to screen after DOM updates
+    requestAnimationFrame(() => {
+      fitToScreen()
+    })
 
     placeholder.classList.add('hidden')
     fileBar.classList.add('active')
@@ -283,16 +549,25 @@ function displayCachedBoard() {
   topSvg.innerHTML = cached.top
   bottomSvg.innerHTML = cached.bottom
 
+  // Set SVG dimensions based on viewBox so 1 unit = 1 pixel
   const topSvgEl = topSvg.querySelector('svg')
   if (topSvgEl) {
-    topSvgEl.style.maxWidth = '80vw'
-    topSvgEl.style.maxHeight = '80vh'
+    const viewBox = topSvgEl.getAttribute('viewBox')
+    if (viewBox) {
+      const [, , w, h] = viewBox.split(/\s+/).map(Number)
+      topSvgEl.style.width = `${w}px`
+      topSvgEl.style.height = `${h}px`
+    }
   }
 
   const bottomSvgEl = bottomSvg.querySelector('svg')
   if (bottomSvgEl) {
-    bottomSvgEl.style.maxWidth = '80vw'
-    bottomSvgEl.style.maxHeight = '80vh'
+    const viewBox = bottomSvgEl.getAttribute('viewBox')
+    if (viewBox) {
+      const [, , w, h] = viewBox.split(/\s+/).map(Number)
+      bottomSvgEl.style.width = `${w}px`
+      bottomSvgEl.style.height = `${h}px`
+    }
   }
 }
 
@@ -339,11 +614,7 @@ zoomOutBtn.addEventListener('click', () => {
 })
 
 resetBtn.addEventListener('click', () => {
-  scale = 1
-  panX = 0
-  panY = 0
-  updateTransform()
-  updateZoomLevel()
+  fitToScreen()
 })
 
 function updateTransform() {
@@ -352,6 +623,48 @@ function updateTransform() {
 
 function updateZoomLevel() {
   zoomLevel.textContent = `${Math.round(scale * 100)}%`
+}
+
+// Fit PCB to screen with 5% margin
+function fitToScreen() {
+  const svgEl = currentView === 'top'
+    ? topSvg.querySelector('svg')
+    : bottomSvg.querySelector('svg')
+
+  if (!svgEl) {
+    console.log('fitToScreen: No SVG element found')
+    return
+  }
+
+  // Get SVG's natural dimensions from viewBox (in gerber units)
+  const viewBox = svgEl.getAttribute('viewBox')
+  if (!viewBox) {
+    console.log('fitToScreen: No viewBox found')
+    return
+  }
+
+  const [, , svgWidth, svgHeight] = viewBox.split(/\s+/).map(Number)
+  console.log(`fitToScreen: viewBox dimensions = ${svgWidth} x ${svgHeight}`)
+
+  // Get viewer dimensions
+  const viewerRect = viewer.getBoundingClientRect()
+  console.log(`fitToScreen: viewer dimensions = ${viewerRect.width} x ${viewerRect.height}`)
+
+  // Calculate scale to fit with 5% margin (95% of viewer)
+  // The viewBox is in gerber units, we need to scale so it fits in the viewer
+  const margin = 0.95
+  const scaleX = (viewerRect.width * margin) / svgWidth
+  const scaleY = (viewerRect.height * margin) / svgHeight
+  scale = Math.min(scaleX, scaleY)
+
+  console.log(`fitToScreen: calculated scale = ${scale}`)
+
+  // Reset pan to center
+  panX = 0
+  panY = 0
+
+  updateTransform()
+  updateZoomLevel()
 }
 
 // Pan functionality
@@ -444,11 +757,7 @@ document.addEventListener('keydown', (e) => {
     updateTransform()
     updateZoomLevel()
   } else if (e.key === '0') {
-    scale = 1
-    panX = 0
-    panY = 0
-    updateTransform()
-    updateZoomLevel()
+    fitToScreen()
   } else if (e.key === 'Escape') {
     if (inputLayers.length > 0) {
       modalOverlay.classList.add('hidden')
