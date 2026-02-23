@@ -34,6 +34,10 @@
         <button id="zoomInBtn" title="Zoom In">+</button>
         <button id="resetBtn" title="Reset View">Reset</button>
       </div>
+      <label class="paste-toggle">
+        <input type="checkbox" id="pasteToggle" checked>
+        <span>Paste</span>
+      </label>
     </div>
 
     <div class="viewer" id="viewer">
@@ -44,24 +48,6 @@
       <div class="placeholder" id="placeholder">
         <p>No board loaded</p>
         <span>Drop Gerber files or click "Open Files"</span>
-      </div>
-    </div>
-
-    <!-- Layers Panel -->
-    <div class="layers-panel" id="layersPanel">
-      <div class="layers-header">
-        <h3>Display</h3>
-        <button id="toggleLayersBtn" class="toggle-layers-btn" title="Collapse">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polyline points="15 18 9 12 15 6"></polyline>
-          </svg>
-        </button>
-      </div>
-      <div class="layers-content">
-        <label class="toggle-option">
-          <input type="checkbox" id="pasteToggle" checked>
-          <span>Show Paste Layer</span>
-        </label>
       </div>
     </div>
 
@@ -118,7 +104,11 @@
   <div class="loading-overlay" id="loading">
     <div class="loading-content">
       <div class="spinner"></div>
-      <p>Processing Gerber files...</p>
+      <p id="loadingText">Processing Gerber files...</p>
+      <div class="progress-bar">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+      <p class="progress-text" id="progressText">0%</p>
     </div>
   </div>
 

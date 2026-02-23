@@ -42,6 +42,9 @@ const modalOverlay = document.getElementById('modalOverlay')
 const uploadZone = document.getElementById('uploadZone')
 const fileInput = document.getElementById('fileInput')
 const loading = document.getElementById('loading')
+const loadingText = document.getElementById('loadingText')
+const progressFill = document.getElementById('progressFill')
+const progressText = document.getElementById('progressText')
 const viewer = document.getElementById('viewer')
 const svgContainer = document.getElementById('svgContainer')
 const topSvg = document.getElementById('topSvg')
@@ -61,8 +64,6 @@ const placeholder = document.getElementById('placeholder')
 const errorMessage = document.getElementById('errorMessage')
 const errorText = document.getElementById('errorText')
 const dismissError = document.getElementById('dismissError')
-const layersPanel = document.getElementById('layersPanel')
-const toggleLayersBtn = document.getElementById('toggleLayersBtn')
 const pasteToggle = document.getElementById('pasteToggle')
 
 // State
@@ -73,18 +74,35 @@ let showPaste = true
 let cachedWithPaste = null // { top, bottom }
 let cachedWithoutPaste = null // { top, bottom }
 let scale = 1
+let fittedScale = 1 // Scale when fitted to screen (for zoom percentage)
 let minScale = 0.01 // Minimum zoom level
 let panX = 0
 let panY = 0
 let isDragging = false
 let startX, startY
+let boardWidth = 0
+let boardHeight = 0
+
+// Progress update function
+function updateProgress(percent, text) {
+  progressFill.style.width = `${percent}%`
+  progressText.textContent = `${Math.round(percent)}%`
+  if (text) loadingText.textContent = text
+}
+
+// Optimize SVG by reducing decimal precision
+function optimizeSvg(svgString) {
+  // Reduce decimal precision to 2 places for smaller file size
+  return svgString.replace(/\d+\.\d{3,}/g, (match) => {
+    return parseFloat(match).toFixed(2)
+  })
+}
 
 // Import all files from sample folder as raw text
 const sampleModules = import.meta.glob('./sample/*', { eager: true, query: '?raw' })
 
 // Show modal on page load
 modalOverlay.classList.remove('hidden')
-layersPanel.classList.add('hidden')
 
 // Open button shows modal
 openBtn.addEventListener('click', () => {
@@ -97,7 +115,6 @@ openBtn.addEventListener('click', () => {
   bottomSvg.innerHTML = ''
   placeholder.classList.remove('hidden')
   fileBar.classList.remove('active')
-  layersPanel.classList.add('hidden')
   scale = 1
   panX = 0
   panY = 0
@@ -121,14 +138,39 @@ dismissError.addEventListener('click', () => {
   errorMessage.classList.remove('active')
 })
 
-// Toggle layers panel
-toggleLayersBtn.addEventListener('click', () => {
-  layersPanel.classList.toggle('collapsed')
-})
-
-// Paste toggle
-pasteToggle.addEventListener('change', () => {
+// Paste toggle - generate missing version on-demand
+pasteToggle.addEventListener('change', async () => {
   showPaste = pasteToggle.checked
+
+  // Check if we need to generate the missing version
+  if (!showPaste && !cachedWithoutPaste && inputLayers.length > 0) {
+    // Show loading indicator
+    updateProgress(0, 'Generating alternate view...')
+    loading.classList.add('active')
+
+    try {
+      const layersWithoutPaste = inputLayers.filter(layer => {
+        const filename = layer.filename.toLowerCase()
+        return !filename.includes('paste') && !filename.includes('.gtp') && !filename.includes('.gbp')
+      })
+
+      updateProgress(30, 'Processing...')
+      const result = await renderStackupInWorker(layersWithoutPaste, stackupWorker2)
+
+      updateProgress(70, 'Optimizing...')
+      cachedWithoutPaste = {
+        top: optimizeSvg(result.top),
+        bottom: optimizeSvg(result.bottom)
+      }
+    } catch (error) {
+      console.error('Error generating without-paste version:', error)
+      // Fall back to with-paste version
+      cachedWithoutPaste = cachedWithPaste
+    }
+
+    loading.classList.remove('active')
+  }
+
   displayCachedBoard()
 })
 
@@ -470,9 +512,10 @@ function clearAll() {
   cachedWithoutPaste = null
   placeholder.classList.remove('hidden')
   fileBar.classList.remove('active')
-  layersPanel.classList.add('hidden')
   topSvg.innerHTML = ''
   bottomSvg.innerHTML = ''
+  boardWidth = 0
+  boardHeight = 0
   modalOverlay.classList.remove('hidden')
 
   scale = 1
@@ -485,10 +528,12 @@ function clearAll() {
 function showLoading() {
   loading.classList.add('active')
   errorMessage.classList.remove('active')
+  updateProgress(0, 'Processing Gerber files...')
 }
 
 function hideLoading() {
   loading.classList.remove('active')
+  updateProgress(100, '')
 }
 
 function showError(message) {
@@ -504,30 +549,34 @@ async function renderStackup() {
   }
 
   try {
-    // Generate versions WITHOUT paste layer for filtering
+    updateProgress(10, 'Parsing Gerber files...')
+
+    // Only generate the initially visible version (with paste)
+    // The other version will be generated on-demand when toggled
+    updateProgress(20, 'Generating board visualization...')
+    const result = await renderStackupInWorker(inputLayers, stackupWorker1)
+
+    // Optimize SVG (reduce decimal precision)
+    updateProgress(60, 'Optimizing rendering...')
+    const optimizedTop = optimizeSvg(result.top)
+    const optimizedBottom = optimizeSvg(result.bottom)
+    cachedWithPaste = { top: optimizedTop, bottom: optimizedBottom }
+
+    // Check if there are paste layers to filter
     const layersWithoutPaste = inputLayers.filter(layer => {
       const filename = layer.filename.toLowerCase()
       return !filename.includes('paste') && !filename.includes('.gtp') && !filename.includes('.gbp')
     })
 
-    // Process both versions in parallel using two workers
-    const hasPasteLayers = layersWithoutPaste.length < inputLayers.length
-
-    let results
-    if (hasPasteLayers && layersWithoutPaste.length > 0) {
-      // Process both versions in parallel
-      results = await Promise.all([
-        renderStackupInWorker(inputLayers, stackupWorker1),
-        renderStackupInWorker(layersWithoutPaste, stackupWorker2)
-      ])
-      cachedWithPaste = { top: results[0].top, bottom: results[0].bottom }
-      cachedWithoutPaste = { top: results[1].top, bottom: results[1].bottom }
-    } else {
-      // Only one version needed (no paste layers or only paste layers)
-      const result = await renderStackupInWorker(inputLayers, stackupWorker1)
-      cachedWithPaste = { top: result.top, bottom: result.bottom }
+    // If no paste layers exist, both versions are the same
+    if (layersWithoutPaste.length === inputLayers.length) {
       cachedWithoutPaste = cachedWithPaste
+    } else {
+      // Will be generated on-demand when user toggles paste
+      cachedWithoutPaste = null
     }
+
+    updateProgress(80, 'Rendering board...')
 
     // Display the current selection
     displayCachedBoard()
@@ -537,11 +586,12 @@ async function renderStackup() {
       fitToScreen()
     })
 
+    updateProgress(100, 'Complete!')
+
     placeholder.classList.add('hidden')
     fileBar.classList.add('active')
     fileInfo.textContent = `${fileNames.length} file${fileNames.length !== 1 ? 's' : ''} loaded`
     modalOverlay.classList.add('hidden')
-    layersPanel.classList.remove('hidden')
 
     hideLoading()
 
@@ -559,7 +609,7 @@ function displayCachedBoard() {
   topSvg.innerHTML = cached.top
   bottomSvg.innerHTML = cached.bottom
 
-  // Set SVG dimensions based on viewBox so 1 unit = 1 pixel
+  // Set SVG dimensions based on viewBox and store board dimensions
   const topSvgEl = topSvg.querySelector('svg')
   if (topSvgEl) {
     const viewBox = topSvgEl.getAttribute('viewBox')
@@ -567,6 +617,8 @@ function displayCachedBoard() {
       const [, , w, h] = viewBox.split(/\s+/).map(Number)
       topSvgEl.style.width = `${w}px`
       topSvgEl.style.height = `${h}px`
+      boardWidth = w
+      boardHeight = h
     }
   }
 
@@ -610,15 +662,31 @@ function switchView(view) {
   }
 }
 
-// Zoom controls
+// Zoom controls - zoom toward viewport center
 zoomInBtn.addEventListener('click', () => {
-  scale = Math.min(scale * 1.25, 10)
+  const oldScale = scale
+  const newScale = Math.min(scale * 1.25, 5)
+
+  // Adjust pan to keep center fixed
+  const scaleRatio = newScale / oldScale
+  panX = panX * scaleRatio
+  panY = panY * scaleRatio
+  scale = newScale
+
   updateTransform()
   updateZoomLevel()
 })
 
 zoomOutBtn.addEventListener('click', () => {
-  scale = Math.max(scale / 1.25, minScale)
+  const oldScale = scale
+  const newScale = Math.max(scale / 1.25, minScale)
+
+  // Adjust pan to keep center fixed
+  const scaleRatio = newScale / oldScale
+  panX = panX * scaleRatio
+  panY = panY * scaleRatio
+  scale = newScale
+
   updateTransform()
   updateZoomLevel()
 })
@@ -627,36 +695,38 @@ resetBtn.addEventListener('click', () => {
   fitToScreen()
 })
 
+let zoomLevelRaf = null
+
 function updateTransform() {
   svgContainer.style.transform = `translate(calc(-50% + ${panX}px), calc(-50% + ${panY}px)) scale(${scale})`
 }
 
 function updateZoomLevel() {
-  zoomLevel.textContent = `${Math.round(scale * 100)}%`
+  // Debounce zoom level updates with RAF to avoid layout thrashing
+  if (zoomLevelRaf) return
+  zoomLevelRaf = requestAnimationFrame(() => {
+    // Show zoom relative to "fitted to screen = 100%"
+    const zoomPercent = Math.round((scale / fittedScale) * 100)
+    zoomLevel.textContent = `${zoomPercent}%`
+    zoomLevelRaf = null
+  })
 }
 
 // Fit PCB to screen with 5% margin
 function fitToScreen() {
-  const svgEl = currentView === 'top'
-    ? topSvg.querySelector('svg')
-    : bottomSvg.querySelector('svg')
-
-  if (!svgEl) return
-
-  // Get SVG's natural dimensions from viewBox (in gerber units)
-  const viewBox = svgEl.getAttribute('viewBox')
-  if (!viewBox) return
-
-  const [, , svgWidth, svgHeight] = viewBox.split(/\s+/).map(Number)
+  if (boardWidth === 0 || boardHeight === 0) return
 
   // Get viewer dimensions
   const viewerRect = viewer.getBoundingClientRect()
 
   // Calculate scale to fit with 5% margin (95% of viewer)
   const margin = 0.95
-  const scaleX = (viewerRect.width * margin) / svgWidth
-  const scaleY = (viewerRect.height * margin) / svgHeight
+  const scaleX = (viewerRect.width * margin) / boardWidth
+  const scaleY = (viewerRect.height * margin) / boardHeight
   scale = Math.min(scaleX, scaleY)
+
+  // Store fitted scale for zoom percentage calculation
+  fittedScale = scale
 
   // Set minimum scale to fitted scale (can't zoom out past full board view)
   minScale = scale
@@ -692,17 +762,33 @@ viewer.addEventListener('mouseleave', () => {
   isDragging = false
 })
 
-// Mouse wheel zoom
+// Mouse wheel zoom - zoom toward mouse position
 viewer.addEventListener('wheel', (e) => {
   e.preventDefault()
+
+  const oldScale = scale
   const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1
-  scale = Math.max(minScale, Math.min(10, scale * zoomFactor))
+  const newScale = Math.max(minScale, Math.min(5, scale * zoomFactor))
+
+  if (newScale !== oldScale) {
+    // Get mouse position relative to viewer center
+    const rect = viewer.getBoundingClientRect()
+    const mouseX = e.clientX - rect.left - rect.width / 2
+    const mouseY = e.clientY - rect.top - rect.height / 2
+
+    // Adjust pan to keep mouse position fixed
+    const scaleRatio = newScale / oldScale
+    panX = mouseX - (mouseX - panX) * scaleRatio
+    panY = mouseY - (mouseY - panY) * scaleRatio
+    scale = newScale
+  }
+
   updateTransform()
   updateZoomLevel()
 }, { passive: false })
 
 // Touch support
-let touchStartX, touchStartY, initialPinchDistance
+let touchStartX, touchStartY, initialPinchDistance, initialPinchScale
 
 viewer.addEventListener('touchstart', (e) => {
   if (e.touches.length === 1) {
@@ -711,6 +797,7 @@ viewer.addEventListener('touchstart', (e) => {
     touchStartY = e.touches[0].clientY - panY
   } else if (e.touches.length === 2) {
     initialPinchDistance = getPinchDistance(e.touches)
+    initialPinchScale = scale
   }
 })
 
@@ -724,8 +811,21 @@ viewer.addEventListener('touchmove', (e) => {
   } else if (e.touches.length === 2) {
     const currentDistance = getPinchDistance(e.touches)
     const scaleFactor = currentDistance / initialPinchDistance
-    scale = Math.max(minScale, Math.min(10, scale * scaleFactor))
-    initialPinchDistance = currentDistance
+    const oldScale = scale
+    const newScale = Math.max(minScale, Math.min(5, initialPinchScale * scaleFactor))
+
+    if (newScale !== oldScale) {
+      // Get midpoint of two fingers relative to viewer center
+      const rect = viewer.getBoundingClientRect()
+      const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left - rect.width / 2
+      const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top - rect.height / 2
+
+      // Adjust pan to keep midpoint fixed
+      const scaleRatio = newScale / oldScale
+      panX = midX - (midX - panX) * scaleRatio
+      panY = midY - (midY - panY) * scaleRatio
+      scale = newScale
+    }
     updateTransform()
     updateZoomLevel()
   }
@@ -751,11 +851,21 @@ document.addEventListener('keydown', (e) => {
   } else if (e.key === 'b' || e.key === 'B') {
     switchView('bottom')
   } else if (e.key === '+' || e.key === '=') {
-    scale = Math.min(scale * 1.25, 10)
+    const oldScale = scale
+    const newScale = Math.min(scale * 1.25, 5)
+    const scaleRatio = newScale / oldScale
+    panX = panX * scaleRatio
+    panY = panY * scaleRatio
+    scale = newScale
     updateTransform()
     updateZoomLevel()
   } else if (e.key === '-') {
-    scale = Math.max(scale / 1.25, minScale)
+    const oldScale = scale
+    const newScale = Math.max(scale / 1.25, minScale)
+    const scaleRatio = newScale / oldScale
+    panX = panX * scaleRatio
+    panY = panY * scaleRatio
+    scale = newScale
     updateTransform()
     updateZoomLevel()
   } else if (e.key === '0') {
@@ -766,8 +876,6 @@ document.addEventListener('keydown', (e) => {
     }
   } else if (e.key === 'o' || e.key === 'O') {
     modalOverlay.classList.remove('hidden')
-  } else if (e.key === 'l' || e.key === 'L') {
-    layersPanel.classList.toggle('collapsed')
   } else if (e.key === 'p' || e.key === 'P') {
     showPaste = !showPaste
     pasteToggle.checked = showPaste

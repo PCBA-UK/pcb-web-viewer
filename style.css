@@ -139,6 +139,30 @@ body {
   color: #666;
 }
 
+.paste-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: #888;
+  margin-left: 16px;
+  padding-left: 16px;
+  border-left: 1px solid #333;
+  transition: color 0.2s;
+}
+
+.paste-toggle:hover {
+  color: #fff;
+}
+
+.paste-toggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: #00d4ff;
+  cursor: pointer;
+}
+
 /* Viewer */
 .viewer {
   flex: 1;
@@ -170,99 +194,6 @@ body {
 
 .board-side.hidden {
   display: none;
-}
-
-/* Layers Panel */
-.layers-panel {
-  position: absolute;
-  top: 80px;
-  right: 20px;
-  min-width: 180px;
-  background: rgba(22, 27, 34, 0.95);
-  border-radius: 12px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-  z-index: 100;
-  overflow: hidden;
-  transition: transform 0.3s ease, opacity 0.3s ease;
-}
-
-.layers-panel.hidden {
-  transform: translateX(calc(100% + 30px));
-  opacity: 0;
-  pointer-events: none;
-}
-
-.layers-panel.collapsed .layers-content {
-  display: none;
-}
-
-.layers-panel.collapsed .layers-header h3 {
-  display: none;
-}
-
-.layers-panel.collapsed .toggle-layers-btn svg {
-  transform: rotate(180deg);
-}
-
-.layers-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.layers-header h3 {
-  font-size: 0.9rem;
-  font-weight: 500;
-  color: #888;
-}
-
-.toggle-layers-btn {
-  background: none;
-  border: none;
-  color: #666;
-  cursor: pointer;
-  padding: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: color 0.2s;
-}
-
-.toggle-layers-btn:hover {
-  color: #fff;
-}
-
-.toggle-layers-btn svg {
-  width: 16px;
-  height: 16px;
-  transition: transform 0.3s ease;
-}
-
-.layers-content {
-  padding: 12px 16px;
-}
-
-.toggle-option {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  cursor: pointer;
-  font-size: 0.9rem;
-  color: #ccc;
-  transition: color 0.2s;
-}
-
-.toggle-option:hover {
-  color: #fff;
-}
-
-.toggle-option input[type="checkbox"] {
-  width: 18px;
-  height: 18px;
-  accent-color: #00d4ff;
-  cursor: pointer;
 }
 
 .placeholder {
@@ -535,6 +466,29 @@ body {
   border-radius: 50%;
   margin: 0 auto 15px;
   animation: spin 1s linear infinite;
+}
+
+.progress-bar {
+  width: 200px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  margin: 10px auto 5px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #00d4ff, #7c3aed);
+  border-radius: 2px;
+  width: 0%;
+  transition: width 0.3s ease;
+}
+
+.progress-text {
+  font-size: 0.8rem;
+  color: #666;
+  margin: 0;
 }
 
 @keyframes spin {
